@@ -4274,6 +4274,121 @@ static const struct file_operations i915_display_crc_ctl_fops = {
 	.write = display_crc_ctl_write
 };
 
+static ssize_t i915_displayport_test_force_bpc_write(struct file *file,
+					    const char __user *ubuf,
+					    size_t len, loff_t *offp)
+{
+	char *input_buffer;
+	int status = 0;
+	struct drm_device *dev;
+	struct drm_connector *connector;
+	struct list_head *connector_list;
+	struct intel_dp *intel_dp;
+	int val = 0;
+
+	dev = ((struct seq_file *)file->private_data)->private;
+
+	connector_list = &dev->mode_config.connector_list;
+
+	if (len == 0)
+		return 0;
+
+	input_buffer = kmalloc(len + 1, GFP_KERNEL);
+	if (!input_buffer)
+		return -ENOMEM;
+
+	if (copy_from_user(input_buffer, ubuf, len)) {
+		status = -EFAULT;
+		goto out;
+	}
+
+	input_buffer[len] = '\0';
+	DRM_DEBUG_DRIVER("Copied %d bytes from user\n", (unsigned int)len);
+
+	list_for_each_entry(connector, connector_list, head) {
+
+		if (connector->connector_type !=
+		    DRM_MODE_CONNECTOR_DisplayPort)
+			continue;
+
+		if (connector->status == connector_status_connected &&
+		    connector->encoder != NULL) {
+			intel_dp = enc_to_intel_dp(connector->encoder);
+			status = kstrtoint(input_buffer, 10, &val);
+			if (status < 0)
+				goto out;
+			DRM_DEBUG_DRIVER("Got %d for force bpc\n", val);
+			switch(val) {
+			case 0:
+			case 6:
+			case 8:
+			case 10:
+			case 12:
+				intel_dp->compliance_force_bpc = val;
+				break;
+			default:
+				/* If we get an illegal value do the safe
+				 * thing and rely on the calculated default
+				 */
+				intel_dp->compliance_force_bpc = 0;
+			}
+		}
+	}
+out:
+	kfree(input_buffer);
+	if (status < 0)
+		return status;
+
+	*offp += len;
+	return len;
+}
+
+static int i915_displayport_test_force_bpc_show(struct seq_file *m,
+						void *data)
+{
+	struct drm_device *dev = m->private;
+	struct drm_connector *connector;
+	struct list_head *connector_list = &dev->mode_config.connector_list;
+	struct intel_dp *intel_dp;
+
+	list_for_each_entry(connector, connector_list, head) {
+
+		if (connector->connector_type !=
+		    DRM_MODE_CONNECTOR_DisplayPort)
+			continue;
+
+		if (connector->status == connector_status_connected &&
+		    connector->encoder != NULL) {
+			intel_dp = enc_to_intel_dp(connector->encoder);
+			if (intel_dp->compliance_force_bpc) {
+				seq_printf(m, "%lu",
+					   intel_dp->compliance_force_bpc);
+			} else
+				seq_puts(m, "0");
+		} else
+			seq_puts(m, "0");
+	}
+
+	return 0;
+}
+
+static int i915_displayport_test_force_bpc_open(struct inode *inode,
+						struct file *file)
+{
+	struct drm_device *dev = inode->i_private;
+
+	return single_open(file, i915_displayport_test_force_bpc_show, dev);
+}
+
+static const struct file_operations i915_displayport_test_force_bpc_fops = {
+	.owner = THIS_MODULE,
+	.open = i915_displayport_test_force_bpc_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+	.write = i915_displayport_test_force_bpc_write
+};
+
 static ssize_t i915_displayport_test_active_write(struct file *file,
 					    const char __user *ubuf,
 					    size_t len, loff_t *offp)
@@ -5404,7 +5519,8 @@ static const struct i915_debugfs_files {
 	{"i915_fbc_false_color", &i915_fbc_fc_fops},
 	{"i915_dp_test_data", &i915_displayport_test_data_fops},
 	{"i915_dp_test_type", &i915_displayport_test_type_fops},
-	{"i915_dp_test_active", &i915_displayport_test_active_fops}
+	{"i915_dp_test_active", &i915_displayport_test_active_fops},
+	{"i915_dp_test_force_bpc", &i915_displayport_test_force_bpc_fops}
 };
 
 void intel_display_crc_init(struct drm_device *dev)
